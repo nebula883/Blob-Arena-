@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blob Arena - Multiplayer Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #111113;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+
+        .backdrop-blur-xl {
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+        }
+
+        .animate-pulse-custom {
+            animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: .7;
+                transform: scale(1.05);
+            }
+        }
+
+        /* Special Wave 10 Flash */
+        .wave-flash-yellow {
+            animation: waveFlash 1s infinite;
+            color: #facc15 !important;
+            text-shadow: 0 0 20px #facc15;
+        }
+
+        @keyframes waveFlash {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.2);
+            }
+        }
+
+        #ui-layer>div {
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .scale-up {
+            animation: scaleUp 0.5s ease-out;
+        }
+
+        @keyframes scaleUp {
+            from {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body class="text-white select-none">
+
+    <!-- GAME OVERLAY UI -->
+    <div id="ui-layer" class="absolute inset-0 z-50 pointer-events-none">
+
+        <!-- MAIN MENU -->
+        <div id="menu-view" class="flex items-center justify-center h-full pointer-events-auto">
+            <div
+                class="bg-zinc-900/90 p-10 rounded-[2rem] border border-zinc-700 max-w-2xl w-full shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                <h1
+                    class="text-7xl font-black text-center mb-10 bg-gradient-to-br from-blue-400 via-purple-500 to-red-500 bg-clip-text text-transparent italic tracking-tighter uppercase">
+                    BLOB ARENA</h1>
+                <div class="grid grid-cols-2 gap-6">
+                    <button onclick="playSFX('click'); setupOnline('host')"
+                        class="h-40 bg-zinc-800 hover:bg-green-600 rounded-2xl font-bold text-2xl flex flex-col items-center justify-center transition-all hover:scale-[1.05] shadow-lg group">
+                        <span class="text-4xl mb-2 group-hover:scale-125 transition-transform">📡</span> Host Room
+                    </button>
+                    <button onclick="playSFX('click'); showView('join')"
+                        class="h-40 bg-zinc-800 hover:bg-purple-600 rounded-2xl font-bold text-2xl flex flex-col items-center justify-center transition-all hover:scale-[1.05] shadow-lg group">
+                        <span class="text-4xl mb-2 group-hover:scale-125 transition-transform">👥</span> Join Room
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOBBY (HOST) -->
+        <div id="lobby-view" class="hidden flex items-center justify-center h-full pointer-events-auto bg-black/90">
+            <div
+                class="relative text-center p-12 bg-zinc-900 rounded-[2.5rem] border border-zinc-700 max-w-md w-full shadow-2xl">
+                <button onclick="playSFX('click'); resetToMenu()"
+                    class="absolute top-6 right-6 text-zinc-500 hover:text-white transition-all text-3xl font-black">✕</button>
+                <h2 class="text-3xl font-black mb-4 text-white uppercase tracking-tighter">Lobby Created</h2>
+                <p class="text-zinc-400 mb-8 font-medium">Your friend needs this code to join:</p>
+                <div id="room-id-display"
+                    class="text-5xl font-mono font-black bg-zinc-950 px-8 py-6 rounded-2xl border-2 border-green-500 mb-10 tracking-widest text-green-400 uppercase shadow-inner">
+                    ----</div>
+                <button onclick="playSFX('click'); startGame()"
+                    class="bg-green-600 hover:bg-green-500 px-8 py-5 rounded-2xl font-black text-2xl w-full text-white shadow-lg shadow-green-900/40 transition-all hover:scale-105 active:scale-95">START
+                    GAME</button>
+            </div>
+        </div>
+
+        <!-- JOIN ROOM -->
+        <div id="join-view" class="hidden flex items-center justify-center h-full pointer-events-auto bg-black/90">
+            <div
+                class="text-center w-full max-w-md relative p-12 bg-zinc-900 rounded-[2.5rem] border border-zinc-700 shadow-2xl">
+                <button onclick="playSFX('click'); resetToMenu()"
+                    class="absolute top-6 right-6 text-zinc-500 hover:text-white transition-all text-3xl font-black">✕</button>
+                <h2 class="text-3xl font-black mb-8 text-white uppercase tracking-tighter">Join Arena</h2>
+                <input type="text" id="room-input" placeholder="ROOM ID"
+                    class="w-full bg-zinc-950 border-2 border-zinc-800 p-6 rounded-2xl text-center text-4xl font-mono uppercase mb-6 focus:border-purple-500 outline-none text-white tracking-widest" />
+                <div class="flex gap-4">
+                    <button onclick="playSFX('click'); resetToMenu()"
+                        class="flex-1 bg-zinc-800 py-5 rounded-xl font-bold text-zinc-400 hover:bg-zinc-700 transition-colors uppercase">Cancel</button>
+                    <button onclick="playSFX('click'); setupOnline('join')"
+                        class="flex-1 bg-purple-600 py-5 rounded-xl font-black text-white hover:bg-purple-500 shadow-lg shadow-purple-900/40 uppercase">Connect</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- BUFF SELECTION -->
+        <div id="buff-view"
+            class="hidden flex flex-col items-center justify-center h-full pointer-events-auto bg-black/40 backdrop-blur-md">
+            <h2 class="text-5xl font-black text-yellow-400 mb-12 uppercase tracking-widest drop-shadow-lg">PICK YOUR
+                POWER</h2>
+            <div id="buff-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 px-10">
+            </div>
+        </div>
+
+        <!-- GAME OVER -->
+        <div id="death-view" class="hidden flex items-center justify-center h-full pointer-events-auto">
+            <div class="absolute inset-0 backdrop-blur-2xl bg-black/60"></div>
+            <div class="relative text-center scale-up">
+                <h1
+                    class="text-[8rem] md:text-[10rem] font-black text-red-600 mb-2 drop-shadow-[0_10px_30px_rgba(220,38,38,0.8)] animate-pulse-custom tracking-tighter">
+                    YOU DIED</h1>
+                <p id="death-message"
+                    class="text-2xl md:text-4xl text-white/90 mb-16 font-black tracking-[0.3em] uppercase opacity-80">
+                </p>
+                <button onclick="playSFX('click'); window.location.reload()"
+                    class="bg-white text-zinc-950 px-20 py-6 rounded-full font-black text-3xl md:text-4xl hover:scale-110 transition-all shadow-[0_0_40px_rgba(255,255,255,0.3)] active:scale-95">
+                    MAIN MENU
+                </button>
+            </div>
+        </div>
+
+        <!-- IN-GAME HUD -->
+        <div id="game-hud" class="hidden absolute inset-0 pointer-events-none">
+            <!-- Wave (Top Center) -->
+            <div class="absolute top-10 left-1/2 -translate-x-1/2 text-center">
+                <div id="hud-wave"
+                    class="text-5xl font-black text-white uppercase tracking-tighter transition-all duration-300">Wave 1
+                </div>
+                <div id="hud-score" class="text-xl font-bold text-white/40">Score: 0</div>
+
+                <!-- Boss Health Bar -->
+                <div id="boss-hud"
+                    class="hidden mt-4 w-96 h-6 bg-zinc-900/80 rounded-full border-2 border-red-900 overflow-hidden relative shadow-[0_0_30px_rgba(220,38,38,0.4)]">
+                    <div id="boss-hp-bar"
+                        class="h-full bg-gradient-to-r from-red-600 via-red-500 to-orange-500 transition-all duration-200 w-full">
+                    </div>
+                    <div
+                        class="absolute inset-0 flex items-center justify-center font-black text-xs text-white/90 tracking-widest uppercase text-shadow">
+                        BOSS ENTITY DETECTED</div>
+                </div>
+            </div>
+
+            <!-- Health Bar (Bottom Left) -->
+            <div class="absolute bottom-10 left-10 flex flex-col items-start">
+                <div class="text-xs font-black uppercase tracking-widest text-white/40 mb-1 ml-1">Health Integrity</div>
+                <div
+                    class="w-64 md:w-80 h-8 bg-zinc-950 rounded-lg border-4 border-zinc-800 overflow-hidden relative shadow-2xl">
+                    <div id="hud-hp-bar"
+                        class="h-full bg-gradient-to-r from-red-600 to-green-500 transition-all duration-300 w-full shadow-[0_0_20px_rgba(34,197,94,0.3)]">
+                    </div>
+                    <div class="absolute inset-0 flex items-center justify-center font-black text-xs text-white/60 tracking-tighter"
+                        id="hp-text">100 / 100</div>
+                </div>
+                <div id="hud-weapon-container"
+                    class="mt-4 bg-zinc-900/90 backdrop-blur-lg px-6 py-3 rounded-xl border border-zinc-700 shadow-xl">
+                    <div id="hud-weapon" class="text-xl font-black uppercase text-white tracking-tight">Pistol</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        /**
+         * AUDIO SYSTEM (Same as original)
+         */
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSFX(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const now = audioCtx.currentTime;
+
+            if (type === 'explosion') {
+                const noise = audioCtx.createBufferSource();
+                const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.5, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+                noise.buffer = buffer;
+                const gain = audioCtx.createGain();
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass'; filter.frequency.setValueAtTime(400, now); filter.frequency.exponentialRampToValueAtTime(40, now + 0.5);
+                noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+                gain.gain.setValueAtTime(0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                noise.start(now); noise.stop(now + 0.5);
+                return;
+            }
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            switch (type) {
+                case 'click':
+                    osc.type = 'triangle'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(880, now + 0.05);
+                    gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now); osc.stop(now + 0.1);
+                    break;
+                case 'shoot':
+                    osc.type = 'square'; osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(40, now + 0.1);
+                    gain.gain.setValueAtTime(0.08, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now); osc.stop(now + 0.1);
+                    break;
+                case 'squish':
+                    osc.type = 'sine'; osc.frequency.setValueAtTime(800, now); osc.frequency.exponentialRampToValueAtTime(200, now + 0.05);
+                    gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                    osc.start(now); osc.stop(now + 0.05);
+                    break;
+                case 'wave':
+                    osc.type = 'sawtooth'; osc.frequency.setValueAtTime(110, now); osc.frequency.exponentialRampToValueAtTime(440, now + 0.5);
+                    gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                    osc.start(now); osc.stop(now + 0.5);
+                    break;
+            }
+        }
+
+        // --- Config ---
+        const TAU = Math.PI * 2;
+        const WEAPONS = {
+            pistol: { name: 'Pistol', laser: false },
+            shotgun: { name: 'Shotgun', laser: false },
+            minigun: { name: 'Minigun', laser: false },
+            sniper: { name: 'Sniper Rifle', laser: true },
+            rpg: { name: 'RPG', laser: false },
+            grenade: { name: 'Grenade Lnch', laser: false },
+            laser: { name: 'Laser Gun', laser: true, color: '#ff0000' }
+        };
+
+        // --- State ---
+        let canvas, ctx;
+        let socket;
+        let myId;
+        let keys = {};
+        let mouse = { x: 0, y: 0 };
+        let gameState = {
+            players: {}, enemies: [], bullets: [], pickups: [], warningZones: [],
+            decals: [], floatingTexts: [],
+            camera: { x: 0, y: 0, shake: 0, zoom: 1 }
+        };
+
+        // --- Init ---
+        window.onload = () => {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+            window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+            window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+            window.addEventListener('mousedown', () => keys[' '] = true);
+            window.addEventListener('mouseup', () => keys[' '] = false);
+
+            socket = io();
+            socket.on('connect', () => { myId = socket.id; });
+
+            socket.on('roomCreated', (id) => {
+                document.getElementById('room-id-display').innerText = id;
+                showView('lobby');
+            });
+
+            socket.on('joinedRoom', (id) => {
+                showView('game');
+                startGameLoop();
+            });
+
+            socket.on('gameStarted', () => {
+                showView('game');
+                startGameLoop();
+            });
+
+            function startGameLoop() {
+                if (!window.isGameRunning) {
+                    window.isGameRunning = true;
+                    requestAnimationFrame(gameLoop);
+                }
+            }
+
+            socket.on('gamestate', (serverState) => {
+                // Merge server state.
+                // Interpolation could be added here for smoothness.
+                gameState.players = serverState.players;
+                gameState.enemies = serverState.enemies;
+                gameState.bullets = serverState.bullets;
+                gameState.pickups = serverState.pickups;
+                gameState.warningZones = serverState.warningZones;
+
+                // Update HUD
+                if (gameState.players[myId]) {
+                    const me = gameState.players[myId];
+                    if (me.dead) return;
+                    document.getElementById('hud-hp-bar').style.width = (me.hp / me.maxHp * 100) + '%';
+                    document.getElementById('hp-text').innerText = `${Math.ceil(me.hp)} / ${Math.ceil(me.maxHp)}`;
+                    document.getElementById('hud-weapon').innerText = WEAPONS[me.weapon].name;
+                }
+
+                document.getElementById('hud-wave').innerText = `Wave ${serverState.wave}`;
+                document.getElementById('hud-score').innerText = `Score: ${serverState.score}`;
+
+                const waveEl = document.getElementById('hud-wave');
+                if (serverState.wave % 10 === 0) waveEl.classList.add('wave-flash-yellow');
+                else waveEl.classList.remove('wave-flash-yellow');
+
+                // Boss HUD
+                const boss = serverState.enemies.find(e => e.type.includes('boss'));
+                const bossHud = document.getElementById('boss-hud');
+                if (boss && boss.maxHp) {
+                    bossHud.classList.remove('hidden');
+                    document.getElementById('boss-hp-bar').style.width = (boss.hp / boss.maxHp * 100) + '%';
+                } else {
+                    bossHud.classList.add('hidden');
+                }
+            });
+
+            socket.on('vfx', (data) => {
+                if (data.type === 'explosion') {
+                    playSFX('explosion');
+                    gameState.camera.shake = 15;
+                    // Add visual explosion locally logic if de-coupled from server state? 
+                    // Actually, let's just render a one-off explosion since we don't have a persistent list locally anymore
+                    // We can use a local list for transient effects
+                    spawnExplosion(data.x, data.y, data.radius, data.color);
+                } else if (data.type === 'death') {
+                    spawnDecal(data.x, data.y, data.color);
+                    playSFX('squish');
+                }
+            });
+
+            socket.on('floatingText', (data) => {
+                spawnFloatingText(data.x, data.y, data.text, data.color);
+            });
+
+            socket.on('sfx', (type) => playSFX(type));
+
+            socket.on('buffSelect', (data) => {
+                const container = document.getElementById('buff-container');
+                container.innerHTML = '';
+                data.options.forEach(buff => {
+                    const btn = document.createElement('button');
+                    btn.className = "w-full lg:w-64 h-80 bg-zinc-900 border-4 border-zinc-800 hover:border-yellow-400 hover:bg-zinc-800 rounded-[2rem] flex flex-col items-center justify-center gap-6 transition-all hover:scale-105 p-8 text-center group shadow-2xl pointer-events-auto";
+                    btn.innerHTML = `<div class="text-6xl filter drop-shadow-md mb-2">${buff.icon}</div><div><h3 class="text-2xl font-black text-white uppercase mb-2">${buff.name}</h3><p class="text-zinc-500 font-bold text-sm leading-tight">${buff.desc}</p></div>`;
+                    btn.onclick = () => {
+                        playSFX('click');
+                        socket.emit('applyBuff', buff.id);
+                        showView('game');
+                    };
+                    container.appendChild(btn);
+                });
+                showView('buff');
+            });
+
+            socket.on('gameOver', (data) => {
+                document.getElementById('death-message').innerText = `DIED ON WAVE ${data.wave}`;
+                showView('death');
+            });
+
+            socket.on('error', (msg) => alert(msg));
+        };
+
+        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+
+        function showView(viewName) {
+            const views = ['menu', 'lobby', 'join', 'buff', 'death', 'game-hud'];
+            views.forEach(v => {
+                const el = document.getElementById(v + (v === 'game-hud' ? '' : '-view'));
+                if (el) el.classList.add('hidden');
+            });
+            const activeEl = document.getElementById(viewName + (viewName === 'game-hud' ? '' : '-view'));
+            if (activeEl) activeEl.classList.remove('hidden');
+            if (viewName === 'game') document.getElementById('game-hud').classList.remove('hidden');
+        }
+
+        function resetToMenu() { showView('menu'); }
+
+        // --- Logic ---
+
+        function setupOnline(role) {
+            if (role === 'host') {
+                socket.emit('createRoom');
+            } else {
+                const id = document.getElementById('room-input').value.toUpperCase();
+                if (id) socket.emit('joinRoom', id);
+            }
+        }
+
+        function startGame() {
+            socket.emit('startGame');
+        }
+
+        // --- Local VFX ---
+        const localExplosions = [];
+        const localFloatingTexts = [];
+        const localDecals = [];
+
+        function spawnExplosion(x, y, radius, color) { localExplosions.push({ x, y, radius, color, life: 15 }); }
+        function spawnDecal(x, y, color) {
+            localDecals.push({
+                x, y, color,
+                scale: Math.random() * 0.5 + 1.0,
+                angle: Math.random() * TAU,
+                splats: Array.from({ length: 6 }).map(() => ({ dx: (Math.random() - 0.5) * 60, dy: (Math.random() - 0.5) * 60, r: Math.random() * 20 + 10 }))
+            });
+        }
+        function spawnFloatingText(x, y, text, color) { localFloatingTexts.push({ x, y, text, color, life: 60, vy: -1.5 }); }
+
+        function gameLoop() {
+            // Send Input
+            if (gameState.players[myId]) {
+                const p = gameState.players[myId];
+                const cam = gameState.camera;
+                // Calculate angle relative to camera
+                const screenX = canvas.width / 2 + (p.x - cam.x - canvas.width / 2) * cam.zoom;
+                const screenY = canvas.height / 2 + (p.y - cam.y - canvas.height / 2) * cam.zoom;
+                const angle = Math.atan2(mouse.y - screenY, mouse.x - screenX);
+
+                socket.emit('input', { keys, angle });
+
+                // Camera Follow
+                cam.x += (p.x - canvas.width / 2 - cam.x) * 0.1;
+                cam.y += (p.y - canvas.height / 2 - cam.y) * 0.1;
+            }
+            if (gameState.camera.shake > 0) gameState.camera.shake *= 0.92;
+
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            const cam = gameState.camera;
+            const shakeX = (Math.random() - 0.5) * cam.shake;
+            const shakeY = (Math.random() - 0.5) * cam.shake;
+
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.scale(cam.zoom, cam.zoom);
+            ctx.translate(-canvas.width / 2 - cam.x + shakeX, -canvas.height / 2 - cam.y + shakeY);
+
+            // Background
+            ctx.fillStyle = '#f0f0f0'; ctx.fillRect(0, 0, 1600, 1200);
+            ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 2; ctx.beginPath();
+            for (let x = 0; x <= 1600; x += 100) { ctx.moveTo(x, 0); ctx.lineTo(x, 1200); }
+            for (let y = 0; y <= 1200; y += 100) { ctx.moveTo(0, y); ctx.lineTo(1600, y); }
+            ctx.stroke();
+
+            // Decals
+            localDecals.forEach(d => {
+                ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.angle); ctx.scale(d.scale, d.scale);
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#8a0a0a';
+                d.splats.forEach(s => { ctx.beginPath(); ctx.arc(s.dx, s.dy, s.r, 0, TAU); ctx.fill(); });
+                ctx.restore();
+            });
+
+            // Warning Zones
+            gameState.warningZones.forEach(z => {
+                ctx.fillStyle = 'rgba(255,0,0,0.2)'; ctx.beginPath(); ctx.arc(z.x, z.y, z.radius, 0, TAU); ctx.fill();
+                ctx.strokeStyle = 'red'; ctx.beginPath(); ctx.arc(z.x, z.y, z.radius * (z.timer / 100), 0, TAU); ctx.stroke();
+            });
+
+            // Pickups
+            gameState.pickups.forEach(p => {
+                ctx.save(); ctx.translate(p.x, p.y + Math.sin(Date.now() / 200) * 5);
+                ctx.fillStyle = p.type === 'buffToken' ? '#00ff00' : '#FFD700';
+                ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 15;
+                ctx.beginPath(); ctx.arc(0, 0, p.radius, 0, TAU); ctx.fill();
+                ctx.fillStyle = 'black'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText(p.type === 'buffToken' ? '+' : '?', 0, 4);
+                ctx.restore();
+            });
+
+            // Enemies
+            gameState.enemies.forEach(e => drawCharacter(e, e.color, e.type.includes('boss') ? 1.5 : 1));
+
+            // Players
+            Object.values(gameState.players).forEach(p => {
+                if (!p.dead) { drawCharacter(p, p.color); drawWeapon(p); }
+            });
+
+            // Bullets
+            gameState.bullets.forEach(b => {
+                ctx.fillStyle = b.type === 'explosive' ? 'black' : 'gold';
+                ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, TAU); ctx.fill();
+            });
+
+            // Local VFX
+            for (let i = localExplosions.length - 1; i >= 0; i--) {
+                const e = localExplosions[i];
+                ctx.fillStyle = e.color; ctx.globalAlpha = e.life / 15;
+                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, TAU); ctx.fill();
+                e.life--;
+                if (e.life <= 0) localExplosions.splice(i, 1);
+            }
+            ctx.globalAlpha = 1;
+
+            for (let i = localFloatingTexts.length - 1; i >= 0; i--) {
+                const t = localFloatingTexts[i];
+                ctx.save(); ctx.translate(t.x, t.y); ctx.globalAlpha = t.life / 60;
+                ctx.fillStyle = t.color; ctx.shadowColor = 'black'; ctx.shadowBlur = 5;
+                ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText(t.text, 0, 0); ctx.restore();
+                t.life--; t.y += t.vy;
+                if (t.life <= 0) localFloatingTexts.splice(i, 1);
+            }
+
+            ctx.restore();
+        }
+
+        function drawCharacter(char, colors, scale = 1) {
+            const { x, y, angle, radius } = char;
+            ctx.save(); ctx.translate(x, y); ctx.rotate(angle - Math.PI / 2); ctx.scale(scale, scale);
+
+            // Body
+            ctx.lineWidth = 5; ctx.strokeStyle = '#000'; ctx.lineJoin = 'round';
+            ctx.fillStyle = (char.state === 'CHARGE' || char.traitorTimer > 0) ? '#e74c3c' : colors.body; // Traitor red tint
+            ctx.beginPath(); ctx.rect(-radius * 0.8, 0, radius * 1.6, radius * 1.2); ctx.fill(); ctx.stroke();
+
+            // Armor (Player only)
+            if (char.stats && char.stats.hasArmor) {
+                ctx.fillStyle = '#95a5a6'; // Iron grey
+                ctx.fillRect(-radius * 0.9, radius * 0.1, radius * 1.8, radius * 0.6);
+                ctx.strokeRect(-radius * 0.9, radius * 0.1, radius * 1.8, radius * 0.6);
+            }
+
+            // Head
+            ctx.fillStyle = colors.head; ctx.beginPath(); ctx.arc(0, 0, radius, 0, TAU); ctx.fill(); ctx.stroke();
+
+            // Mage Hat
+            if (char.type === 'mage') {
+                ctx.fillStyle = '#8e44ad';
+                ctx.beginPath(); ctx.moveTo(-radius, -radius * 0.5); ctx.lineTo(0, -radius * 2.5); ctx.lineTo(radius, -radius * 0.5); ctx.fill(); ctx.stroke();
+            }
+
+            // Eyes / Visor
+            if (char.type === 'bossW10') {
+                ctx.fillStyle = '#f1c40f'; // Yellow eyes
+                ctx.beginPath(); ctx.arc(-radius * 0.4, -radius * 0.2, 8, 0, TAU); ctx.arc(radius * 0.4, -radius * 0.2, 8, 0, TAU); ctx.fill();
+            } else if (char.type === 'bossW20') {
+                ctx.fillStyle = '#e74c3c'; // Red eyes
+                ctx.beginPath(); ctx.arc(-radius * 0.4, -radius * 0.2, 10, 0, TAU); ctx.arc(radius * 0.4, -radius * 0.2, 10, 0, TAU); ctx.fill();
+            }
+            else {
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(-radius * 0.3, radius * 0.4, 4, 0, TAU); ctx.arc(radius * 0.3, radius * 0.4, 4, 0, TAU); ctx.fill();
+            }
+
+            // Chaos Effect
+            if (char.stats && char.stats.hasChaos) {
+                ctx.shadowColor = 'purple';
+                ctx.shadowBlur = 20;
+            }
+
+            ctx.restore();
+        }
+
+        function drawWeapon(p) {
+            ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+            const xOff = p.radius * 0.8;
+            const w = WEAPONS[p.weapon] || WEAPONS['pistol'];
+
+            // Laser Pointer
+            if (w.laser) {
+                ctx.beginPath();
+                ctx.strokeStyle = w.color || 'rgba(255,0,0,0.6)';
+                ctx.lineWidth = 2;
+                ctx.moveTo(xOff + 50, 0);
+                ctx.lineTo(2500, 0);
+                ctx.stroke();
+            }
+
+            // Models
+            if (p.weapon === 'minigun') { ctx.fillStyle = '#111'; ctx.fillRect(xOff, -10, 48, 22); }
+            else if (p.weapon === 'rpg') { ctx.fillStyle = '#4b5320'; ctx.fillRect(xOff - 10, -9, 55, 18); }
+            else if (p.weapon === 'sniper') { ctx.fillStyle = '#0a0a0a'; ctx.fillRect(xOff - 5, -3, 28, 9); ctx.fillRect(xOff + 23, -2, 45, 5); }
+            else if (p.weapon === 'shotgun') { ctx.fillStyle = '#222'; ctx.fillRect(xOff, -7, 35, 14); }
+            else if (p.weapon === 'grenade') { ctx.fillStyle = '#555'; ctx.fillRect(xOff, -8, 30, 16); }
+            else if (p.weapon === 'laser') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(xOff, -6, 40, 12);
+                ctx.fillStyle = '#c0392b'; ctx.fillRect(xOff + 5, -8, 30, 2); // detail
+            }
+            else { ctx.fillStyle = '#222'; ctx.fillRect(xOff, -5, 22, 10); } // pistol
+            ctx.restore();
+        }
+    </script>
+</body>
+
+</html>
